@@ -10,6 +10,7 @@ from datetime import datetime
 import pytz
 import tzlocal
 import json
+import argparse
 from git.repo import Repo
 from git.repo.fun import is_git_dir
 
@@ -156,7 +157,7 @@ class GitRepository(object):
         从线上拉最新代码
         :return:
         """
-        self.repo.git.pull()
+        self.repo.git.pull("-r")
 
     def branches(self):
         """
@@ -287,7 +288,7 @@ fi
             r = self.repo.git.filter_branch("--env-filter", cmd,  "--", "--all")
         print(r)
 
-    def rewrite_commits_date(self, commits, force=False, push=False):
+    def rewrite_commits_date(self, branches, commits, force=False, push=False, apply_all = False):
         """
         rewrite all commits date of a giving list of commit info
 
@@ -321,9 +322,15 @@ fi
 
         r = None
         if force:
-            r = self.repo.git.filter_branch("--env-filter", cmd, '-f', "--", "--all")
+            if apply_all:
+                r = self.repo.git.filter_branch("--env-filter", cmd, '-f', "--", "--all")
+            else:
+                r = self.repo.git.filter_branch("--env-filter", cmd, '-f')
         else:
-            r = self.repo.git.filter_branch("--env-filter", cmd,  "--", "--all")
+            if apply_all:
+                r = self.repo.git.filter_branch("--env-filter", cmd,  "--", "--all")
+            else:
+                r = self.repo.git.filter_branch("--env-filter", cmd)
         print(r)
         print("rewrite commits date done\n")
 
@@ -333,12 +340,21 @@ fi
         yes_and_no = input("will push rewrite-commits to remote repo, are you sure?[Y/N]")
         yes_and_no = yes_and_no.lower()
         if yes_and_no == 'y':
-            # will push to remote
-            print("push to remote")
-            self.push_to_remote_branch()
+            if apply_all:
+                for branch_name in branches:
+                    self.change_to_branch(branch_name)
+                    self.pull()
+                    print("push to remote branch:{0}".format(branch_name))
+                    self.push_to_remote_branch()
+                    print("push to remote branch:{0} done".format(branch_name))
+                print("########################################################")
+                print("all done")
+            else:
+                self.push_to_remote_branch()
+                print("push to remote branch:{0} done".format(branch_name))
         else:
             print("cancel push operation, you can push manually later!")
-            yes_and_no = input("Or you can check new commits log?[Y/N]")
+            yes_and_no = input("\nOr you can check new commits log?[Y/N]")
             yes_and_no = yes_and_no.lower()
             if yes_and_no == 'n':
                 print('stop operation')
@@ -355,22 +371,42 @@ fi
             if yes_and_no == 'n':
                 print("stop operation")
                 return
-            print("push to remote")
-            self.push_to_remote_branch()
+
+            if apply_all:
+                for branch_name in branches:
+                    self.change_to_branch(branch_name)
+                    self.pull()
+                    print("push to remote branch:{0}".format(branch_name))
+                    self.push_to_remote_branch()
+                    print("push to remote branch:{0} done".format(branch_name))
+                print("########################################################")
+                print("all done")
+            else:
+                self.push_to_remote_branch()
+                print("push to remote branch:{0} done".format(branch_name))
         return
 
    
 
-def main(remote_path, local_path):
+def main(remote_path, local_path, push = False):
     repo = GitRepository(local_path,remote_path)
     branch_list = repo.branches()
     print("list all branch:")
     print(branch_list)
     branch_name = 'master'
     while True:
-        branch_name = input("please select your branch:")
-        if branch_name in branch_list:
+        branch_name = input("please select your branch or input all(for all banches):")
+        if branch_name in branch_list or branch_name == 'all':
             break
+
+    # apply rewrites to all branches/tags if true, otherwise rewrites choose branch
+    apply_all = False
+    if branch_name == 'all':
+        apply_all = True
+        branch_name = 'master'
+        print("will apply to all branches/tags")
+    else:
+        print("will apply to branch:{0}".format(branch_name))
 
     repo.change_to_branch(branch_name)
     repo.pull()
@@ -378,13 +414,25 @@ def main(remote_path, local_path):
     # list of {'commit': '3e14f7158ebafe53228efb0e8bd62baa66f805ec', 'author': 'smaugx', 'summary': 'add zip', 'date': '2020-07-31 10:18:30 +0800'}
     commit_list = repo.commits()
     print("fetch {0} commits".format(len(commit_list)))
-    #repo.rewrite_commits_date(commit_list, False)
-    repo.rewrite_commits_date(commit_list, True, True)
+    repo.rewrite_commits_date(branch_list, commit_list, True, push, apply_all)
 
 
 if __name__ == '__main__':
-    local_path = '/root/temp'
-    remote_path='https://github.com/smaugx/dailytools.git'
+    parser = argparse.ArgumentParser()
+    parser.description='redate_your_commits, rewrite commits date from work-day-time to off-work-time.'
+    parser.add_argument('-l', '--local_path', help='local base path to clone your repo', default='/tmp/redate_repo', type=str)
+    parser.add_argument('-r', '--remote_url', help='your remote repo url',type=str, required =True)
+    parser.add_argument('-p', '--push',       help='push to remote repo',nargs='?',const='true', default='false', type=str)
+
+    args = parser.parse_args()
+
+    local_path = args.local_path
+    remote_path = args.remote_url
+    push =  args.push
+    if push == 'true':
+        push = True
+    else:
+        push = False
     repo_name = remote_path.split('/')[-1].split('.')[0]
     local_path = os.path.join(local_path, repo_name)
-    main(remote_path, local_path)
+    main(remote_path, local_path, push)
