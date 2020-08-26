@@ -4,6 +4,7 @@
 
 import os
 import sys
+import re
 import time
 import requests
 from datetime import datetime
@@ -149,7 +150,7 @@ class GitRepository(object):
         git_local_path = os.path.join(self.local_path, '.git')
         if not is_git_dir(git_local_path):
             print("clone from remote repo:{0} to local:{1}, please wait...".format(repo_url, self.local_path))
-            self.repo = Repo.clone_from(repo_url, to_path=self.local_path, branch=branch)
+            self.repo = Repo.clone_from(repo_url, to_path=self.local_path, branch=branch, bare=True)
         else:
             self.repo = Repo(self.local_path)
 
@@ -324,7 +325,7 @@ fi
         r = None
         if force:
             if apply_all:
-                r = self.repo.git.filter_branch("--env-filter", cmd, '-f',None, "--", "--all")
+                r = self.repo.git.filter_branch("--env-filter", cmd, '-f', "--", "--all")
             else:
                 r = self.repo.git.filter_branch("--env-filter", cmd, '-f')
         else:
@@ -387,35 +388,128 @@ fi
                 print("push to remote branch done")
         return
 
+    def rewrite_commits_date2(self, branches_pattern, tags_pattern, apply_all=False, force=False, push=False):
+        """
+        rewrite all commits date of a giving list of commit info
+
+        :param commits: list
+            a list of commit info, something like this: {'commit': '9d9edffda19ffe79c0ccbc65c2f898e7c01451e8', 'author': 'smaugx', 'summary': 'update Readme; update argsparse', 'date': '2020-08-24 22:26:53 +0800'}
+        :param force: True/False
+            force rewrite or stop rewrite when something goes wrong
+        :return:
+        """
+
+        if not apply_all:
+            if not branches_pattern and not tags_pattern:
+                print("you must give branches_pattern or tags_pattern")
+                return
+
+        commits = self.commits()
+        #print(commits)
+        print("fetch {0} commits".format(len(commits)))
+
+        cmd = ""
+        for commit_item in commits:
+            commit_sha = commit_item.get('commit')
+            old_date   = commit_item.get('date')
+            old_timestamp = int(commit_item.get('timestamp'))
+            new_date = workdaytime_check(old_timestamp)
+            if not new_date:
+                print("ignore commit:{0} because of safe time:{1} timestamp:{2}".format(commit_sha, old_date, old_timestamp))
+                continue
+
+            print("rewrite commit:{0} from old_date:{1} to safe time:{2}".format(commit_sha, old_date, new_date))
+            part_cmd = """
+if [ $GIT_COMMIT = "{0}" ]
+then
+    export GIT_AUTHOR_DATE="{1}"
+    export GIT_COMMITTER_DATE="{2}"
+fi
+""".format(commit_sha, new_date, new_date)
+
+            cmd += part_cmd
+
+        param_force,param_branches,param_tags,param_all = None,None,None,None
+        if force:
+            param_force = '-f'
+        if apply_all:
+            param_all = '--all'
+            print("rewrite for all(branches/tags)")
+        else:
+            if branches_pattern:
+                param_branches = '--branches="{0}"'.format(branches_pattern)
+                print('rewrite for branches:{0}'.format(branches_pattern))
+            if tags_pattern:
+                param_tags = '--tags="{0}"'.format(tags_pattern)
+                print('rewrite for tags:{0}'.format(tags_pattern))
+
+        #r = self.repo.git.filter_branch("--env-filter", cmd, param_force,"--", param_branches, param_tags, param_all)
+        r = self.repo.git.filter_branch("--env-filter", cmd, '-f',"--", branches="'smaug*'", tags="'list*'")
+        print(r)
+        print("rewrite commits date done\n")
+
+        if not push:
+            return
+
+        yes_and_no = input("will push rewrite-commits to remote repo, are you sure?[Y/N]")
+        yes_and_no = yes_and_no.lower()
+        if yes_and_no == 'y':
+            if apply_all:
+                # git push origin 'refs/heads/smaug_fix_bug*' -f
+                self.repo.git.push("-f", "origin", "refs/heads/*")
+                print("push all(branches/tags)  to remote done")
+            else:
+                if branches_pattern:
+                    self.repo.git.push("-f", "origin", "refs/heads/{0}".format(branches_pattern))
+                    print("push branches:{0} to remote done".format(branches_pattern))
+                if tags_pattern:
+                    self.repo.git.push("-f", "origin", "refs/tags/{0}".format(tags_pattern))
+                    print("push tags:{0} to remote done".format(tags_pattern))
+        else:
+            print("cancel push operation, you can push manually later!")
+            yes_and_no = input("\nOr you can check new commits log?[Y/N]")
+            yes_and_no = yes_and_no.lower()
+            if yes_and_no == 'n':
+                print('stop operation')
+                return
+
+            new_commits = self.commits()
+            for commit_item in new_commits:
+                commit_sha = commit_item.get('commit')
+                date = commit_item.get('date')
+                print('commit:{0} date:{1}'.format(commit_sha, date))
+
+            yes_and_no = input("\nif everything is right, push to remote repo?[Y/N]")
+            yes_and_no = yes_and_no.lower()
+            if yes_and_no == 'n':
+                print("stop operation")
+                return
+
+            if apply_all:
+                # git push origin 'refs/heads/smaug_fix_bug*' -f
+                self.repo.git.push("-f", "origin", "refs/heads/*")
+                print("push all(branches/tags)  to remote done")
+            else:
+                if branches_pattern:
+                    self.repo.git.push("-f", "origin", "refs/heads/{0}".format(branches_pattern))
+                    print("push branches:{0} to remote done".format(branches_pattern))
+                if tags_pattern:
+                    self.repo.git.push("-f", "origin", "refs/tags/{0}".format(tags_pattern))
+                    print("push tags:{0} to remote done".format(tags_pattern))
+        return
+
+
    
 
 def main(remote_path, local_path, push = False):
     repo = GitRepository(local_path,remote_path)
-    branch_list = repo.branches()
-    print("list all branch:")
-    print(branch_list)
-    branch_name = 'master'
-    while True:
-        branch_name = input("please select your branch or input all(for all banches):")
-        if branch_name in branch_list or branch_name == 'all':
-            break
-
-    # apply rewrites to all branches/tags if true, otherwise rewrites choose branch
+    branches_pattern = r"smaug_fix*"
+    branches_pattern = r"*"
+    tags_pattern = r"list*"
     apply_all = False
-    if branch_name == 'all':
-        apply_all = True
-        branch_name = 'master'
-        print("will apply to all branches/tags")
-    else:
-        print("will apply to branch:{0}".format(branch_name))
-
-    repo.change_to_branch(branch_name)
-    repo.pull()
-
-    # list of {'commit': '3e14f7158ebafe53228efb0e8bd62baa66f805ec', 'author': 'smaugx', 'summary': 'add zip', 'date': '2020-07-31 10:18:30 +0800'}
-    commit_list = repo.commits()
-    print("fetch {0} commits".format(len(commit_list)))
-    repo.rewrite_commits_date(branch_list, commit_list, True, push, apply_all)
+    force = True
+    push = False
+    repo.rewrite_commits_date2(branches_pattern, tags_pattern, apply_all=apply_all, force=force, push=push)
 
 
 if __name__ == '__main__':
