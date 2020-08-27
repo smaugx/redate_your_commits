@@ -548,7 +548,7 @@ def main(remote_path, local_path, push, force):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.description='redate_your_commits, rewrite commits date from work-day-time to off-work-time.'
+    parser.description='redate_your_commits, rewrite commits date from on-work-time to off-work-time.'
     parser.add_argument('-l', '--local_path', help='local base path to clone your repo', default='/tmp/redate_repo', type=str)
     parser.add_argument('-r', '--remote_url', help='your remote repo url',type=str, required =True)
     parser.add_argument('-p', '--push',       help='push to remote repo',nargs='?',const='true', default='false', type=str)
